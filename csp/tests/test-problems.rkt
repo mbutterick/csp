@@ -1,5 +1,5 @@
 #lang racket
-(require "main.rkt" "test-classes.rkt")
+(require "../main.rkt" "test-classes.rkt")
 (require rackunit)
 
 

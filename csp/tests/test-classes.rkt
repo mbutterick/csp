@@ -1,5 +1,5 @@
 #lang racket
-(require rackunit "main.rkt")
+(require rackunit "../main.rkt")
 
 
 ;; Problem: fields

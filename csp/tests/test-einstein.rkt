@@ -1,6 +1,6 @@
 #lang racket
 
-(require "problem.rkt" "constraint.rkt" sugar/debug)
+(require "../problem.rkt" "../constraint.rkt" sugar/debug)
 
 #|
 # There are no tricks, just pure logic, so good luck and don't give up. 
