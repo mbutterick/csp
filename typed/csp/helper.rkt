@@ -1,7 +1,7 @@
-#lang racket/base
-(require racket/class racket/list (for-syntax racket/base racket/syntax))
+#lang typed/racket/base
+(require (for-syntax racket/base racket/syntax))
+(require typed/racket/class typed/rackunit racket/list typed/sugar/define)
 (provide (all-defined-out))
-(require rackunit)
 
 (define-syntax-rule (forever expr ...)
   (for ([i (in-naturals)])
@@ -21,11 +21,8 @@
                   (send/apply this proc-name args))])
               proc-name))
 
-(define-simple-check (check-hash-items h1 h2)
-  (for/and ([(k1 v1) (in-hash h1)])
-    (equal? (hash-ref h2 k1) v1)))
-
-(define (list-comparator xs ys)
+(define/typed (list-comparator xs ys)
+  (All (A) (Listof A) (Listof A) -> Boolean)
   ;; For use in sort. Compares two lists element by element.
   (cond
     [(equal? xs ys) #f] ; elements are same, so no sort preference    
@@ -35,7 +32,7 @@
             (cond
               [(equal? x y) (list-comparator (cdr xs) (cdr ys))]
               [(and (real? x) (real? y)) (< x y)]
-              [(and (symbol? x) (symbol? y)) (apply string<? (map symbol->string (list x y)))] 
+              [(and (symbol? x) (symbol? y)) (string<? (symbol->string x) (symbol->string y))] 
               [(and (string? x) (string? y)) (string<? x y)]
               [else (error 'list-comparator (format "Can’t compare ~v and ~v" x y))]))]))
 
@@ -68,16 +65,8 @@
 (define-syntax-rule (py-extend! xs x)
   (set! xs `(,@xs ,@x)))
 
-(module+ test
-  (let ([xs '(1 2 3)])
-    (py-append! xs (range 2))
-    (check-equal? xs '(1 2 3 (0 1))))
-  (let ([xs '(1 2 3)])
-    (py-extend! xs (range 2))
-    (check-equal? xs '(1 2 3 0 1))))
-
-
-(define (word-value . xs)
+(define/typed (word-value . xs)
+  (Integer * . -> . Integer)
   (let ([xs (reverse xs)])
     (for/sum ([i (in-range (length xs))])
-      (* (list-ref xs i) (expt 10 i)))))
+      (* (list-ref xs i) (floor (expt 10 i))))))

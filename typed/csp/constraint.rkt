@@ -1,5 +1,5 @@
-#lang racket/base
-(require racket/class racket/bool sugar/container sugar/list sugar/debug racket/list "helper.rkt" "variable.rkt")
+#lang typed/racket/base
+(require typed/racket/class racket/bool sugar/container typed/sugar/list typed/sugar/debug racket/list "helper.rkt" "variable.rkt")
 (provide (all-defined-out))
 
 (define constraint%
@@ -57,7 +57,6 @@
         [else #t]))
     ))
 
-(define constraint%? (is-a?/c constraint%))
 
 (define function-constraint%
   (class constraint% 
@@ -78,7 +77,6 @@
                    (forward-check variables domains assignments)))
           (apply _func parms)))))
 
-(define function-constraint%? (is-a?/c function-constraint%))
 
 ;; Constraint enforcing that values of all given variables are different
 (define all-different-constraint%
@@ -92,14 +90,13 @@
       (cond
         [(not (members-unique? assigned-values)) #f] ; constraint failed because they're not all different
         [(and forward-check?
-              (for*/or ([unassigned-var-domain (in-list (map (λ(uv) (hash-ref domains uv)) unassigned-vars))]
+              (for*/or : Boolean ([unassigned-var-domain (in-list (map (λ(uv) (hash-ref domains uv)) unassigned-vars))]
                         [assigned-value (in-list assigned-values)]
                         #:when (member assigned-value (unassigned-var-domain)))
                 (send unassigned-var-domain hide-value assigned-value)
                 (empty? unassigned-var-domain))) #f] ; if domain had no remaining values, the constraint will be impossible to meet, so return #f
         [else #t]))))
 
-(define all-different-constraint%? (is-a?/c all-different-constraint%))
 
 ;; Constraint enforcing that values of all given variables are different
 (define all-equal-constraint%
@@ -124,6 +121,4 @@
                   (send unassigned-var-domain hide-value value))))] ; otherwise hide nonconforming values
         [else #t]))))
 
-
-(define all-equal-constraint%? (is-a?/c all-equal-constraint%))
 
