@@ -1,5 +1,6 @@
 #lang typed/racket/base
-(require typed/rackunit "../problem.rkt" "../types.rkt" "../solver.rkt" racket/list)
+(require racket/set typed/rackunit "../problem.rkt" "../types.rkt" "../solver.rkt" racket/list typed/sugar/define)
+(require typed/sugar/debug typed/sugar/coerce)
 
 
 ;; ABC problem:
@@ -9,13 +10,80 @@
 ;;     -------
 ;;      A+B+C
 
+(define/typed (assignment-complete? prob assn)
+  (Problem Assignment -> Boolean)
+  (andmap (λ(prob-var) (->boolean (member prob-var (hash-keys assn)))) (problem-variables prob)))
 
-(define vdtable (make-vdtable '("a" "b" "c") (range 10)))
-(define abc-problem (problem empty vdtable))
-abc-problem
-(define bs (make-backtracking-solver))
+(begin
+  (define prob (problem '() (list "foo" "zim") (list (range 10) (range 5))))
+  (check-true (assignment-complete? prob '#hash(("foo" . bar) ("zim" . zam))))
+  (check-false (assignment-complete? prob '#hash(("foo" . bar)))))
 
-(bs abc-problem)
+;; which variable should be assigned next?
+;; for now, just take the first available.
+(define/typed (select-unassigned-variable prob assn)
+  (Problem Assignment -> (Option Variable))
+  (define unassigned-vars (filter-not (λ(prob-var) (member prob-var (hash-keys assn))) (problem-variables prob)))
+  (and (not (empty? unassigned-vars)) (car unassigned-vars)))
+
+(begin
+  (check-false (select-unassigned-variable prob '#hash(("foo" . bar) ("zim" . zam))))
+  (check-equal? (select-unassigned-variable prob '#hash(("foo" . bar))) "zim"))
+
+;; in what order should possible values be tried?
+;; for now, a simple lookup, without any reordering.
+(define/typed (order-domain-values prob assn unassigned-var)
+  (Problem Assignment Variable -> Domain)
+  (define domains (for/list : Domains ([var (in-list (problem-variables prob))]
+                                       [domain (in-list (problem-domains prob))]
+                                       #:when (equal? unassigned-var var))
+                    domain))
+  (define first-domain
+    (if (not (empty? domains))
+        (car domains)
+        (error 'order-domain-values "No domain found for ~a" unassigned-var)))
+  first-domain)
+
+
+(check-equal? (order-domain-values prob '#hash(("foo" . bar)) "zim") '(0 1 2 3 4))
+(check-exn exn:fail? (λ _ (order-domain-values prob '#hash(("foo" . bar) ("zim" . zam)) "not-in-vars")))
+
+
+;; would the proposed new value break any constraints?
+(define/typed (value-consistent? prob assn var val)
+  (Problem Assignment Variable Value -> Boolean)
+  ;; step through constraints and evaluate any where scope is union of assigned vars + var.
+  (define updated-assn (hash-set assn var val))
+  (define scope-to-test (apply set (hash-keys updated-assn)))
+  (define constraints-to-test (filter (λ([c : Constraint]) (equal? (apply set (car c)) scope-to-test)) (problem-constraints prob)))
+  (for/and ([c (in-list constraints-to-test)])
+    (define vars (car c))
+    (define vals (map (λ(var) (hash-ref updated-assn var)) vars))
+    (define proc (cdr c))
+    (apply proc vals)))
+
+  
+(define/typed (backtracking-search prob)
+  (Problem -> (Option Solution))
+  (let backtrack ([prob : Problem prob] [assn : Assignment (hash)])
+    (define unassigned-var (select-unassigned-variable prob assn))
+    (cond
+      [(not unassigned-var) assn] ; assignment is complete, thus we are done
+      [else
+       (for/list : (Listof (Option Solution)) ([possible-val (in-list (order-domain-values prob assn unassigned-var))]
+                                               #:when (value-consistent? prob assn unassigned-var possible-val))
+         (displayln (format "~a is consistent for ~a" possible-val unassigned-var))
+            (define new-assn (hash-set assn unassigned-var possible-val))
+            (backtrack prob new-assn))])))
+
+(define/typed (typed-even? . xs)
+  Relation
+  (andmap (λ([x : Value]) (and (integer? x) (exact? x) (even? x))) xs))
+
+(define abc-problem (problem (list (cons (list "a") typed-even?)) '("a" "b" "c") (make-list 3 (range 3))))
+;abc-problem
+
+(backtracking-search abc-problem)
 
 #|
 (define (test-solution s) (let ([a (hash-ref s "a")]

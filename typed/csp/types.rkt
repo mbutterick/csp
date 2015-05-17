@@ -10,11 +10,15 @@
 (define-predicate domains? Domains)
 (define-type Variable-Domain-Table (HashTable Variable Domain))
 
-(define-type Constraint Procedure)
+(define-type Scope (Listof Variable))
+(define-type Relation (Value * -> Boolean))
+(define-type Constraint (Pairof Scope Relation))
 
-(struct problem ([constraints : (Listof Constraint)] [variable-domains : Variable-Domain-Table]) #:transparent)
+(struct problem ([constraints : (Listof Constraint)] [variables : Variables][domains : Domains]) #:transparent)
 (define-type Problem problem)
 
 (define-type Solver Procedure)
-(define-type Solution (HashTable Variable Value))
+
+(define-type Assignment (HashTable Variable Value))
+(define-type Solution Assignment) ; that is also consistent (= satisfies constraints) and complete (= uses all variables)
 (define-type Solutions (Listof Solution))
