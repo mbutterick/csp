@@ -1,6 +1,29 @@
 #lang racket/base
-(require racket/function racket/generator rackunit "predicates.rkt" racket/list sugar/define sugar/debug)
+(require racket/function racket/generator rackunit racket/list sugar/define sugar/debug)
 
+
+(define variable? (λ(x) (or (string? x) (number? x) (symbol? x))))
+(define value? (λ(x) #t))
+(define (listof? proc) (λ(x) (and (list? x) (andmap proc x))))
+(define (pairof? proc1 proc2) (λ(x) (and (pair? x) (proc1 (car x)) (proc2 (cdr x)))))
+(define domain? (listof? string?))
+(define variable-domain-pair? (pairof? variable? domain?))
+
+(define (empty-assignment) (hash))
+(define assignment-variables hash-keys)
+(define assignment-values hash-values)
+(define assignment-set hash-set)
+(define assignment-ref hash-ref)
+(define assignment-has-variable? hash-has-key?)
+(define assignment? (λ(x) (and (hash? x) (andmap variable? (assignment-variables x)) (andmap value? (assignment-values x)))))
+
+(define scope? (listof? variable?))
+(define relation? procedure?)
+(define constraint? (pairof? scope? relation?))
+(define constraint-scope car)
+(define constraint-relation cdr)
+(struct problem (variables domains constraints) #:transparent)
+(define natural? exact-nonnegative-integer?)
 
 (define/contract (assignment-complete? prob assn)
   (problem? assignment? . -> . boolean?)
@@ -129,7 +152,7 @@ A collection of 33 coins, consisting of nickels, dimes, and quarters, has a valu
                                  (cons '(dimes nickels) (λ(d n) (= n (* 2 d)))))))
 
 
-(time-repeat 10 (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9))))
+(time-repeat 100 (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9))))
 
 
 #|

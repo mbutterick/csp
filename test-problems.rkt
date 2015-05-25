@@ -43,7 +43,7 @@ A collection of 33 coins, consisting of nickels, dimes, and quarters, has a valu
 (send nickel-problem add-constraint (λ(n d q) (= 3.30 (+ (* 0.05 n) (* 0.1 d) (* 0.25 q)))) '(nickels dimes quarters))
 (send nickel-problem add-constraint (λ(n q) (= n (* 3 q))) '(nickels quarters))
 (send nickel-problem add-constraint (λ(d n) (= n (* 2 d))) '(dimes nickels))
-(time-repeat 10 (check-hash-items (send nickel-problem get-solution) #hash((nickels . 18) (quarters . 6) (dimes . 9))))
+(time-repeat 100 (check-hash-items (send nickel-problem get-solution) #hash((nickels . 18) (quarters . 6) (dimes . 9))))
 
 ;; word math
 #|
