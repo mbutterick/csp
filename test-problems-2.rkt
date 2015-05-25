@@ -129,7 +129,7 @@ A collection of 33 coins, consisting of nickels, dimes, and quarters, has a valu
                                  (cons '(dimes nickels) (λ(d n) (= n (* 2 d)))))))
 
 
-(check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9)))
+(time-repeat 10 (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9))))
 
 
 #|
