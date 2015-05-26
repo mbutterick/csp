@@ -74,7 +74,8 @@
     ['(degree) ; degree heuristic: sort vars from most constrained to least
      (define var-degree-pairs (hash->list (frequency-hash (append-map constraint-scope (problem-constraints prob)))))
      (map car (sort var-degree-pairs > #:key cdr))]
-    [else (problem-variables prob)]))
+    [else ; no ordering
+     (problem-variables prob)]))
 
 (define/contract (backtracking-generator prob)
   (problem? . -> . generator?)
@@ -137,13 +138,11 @@
 ;;     -------
 ;;      A+B+C
 
-#;(define abc-problem (problem '("a" "b" "c") (make-list 3 (range 1 10)) empty))
-#;(define (test-solution s) (let ([a (hash-ref s "a")]
-                                  [b (hash-ref s "b")]
-                                  [c (hash-ref s "c")])
-                              (/ (+ (* 100 a) (* 10 b) c) (+ a b c))))
-#;(check-hash-items (argmin test-solution (get-solutions abc-problem backtracking-generator))
-                    #hash(("c" . 9) ("b" . 9) ("a" . 1)))
+(define abc-problem (problem '("a" "b" "c") (make-list 3 (range 1 10)) empty))
+(define (test-solution s) (let ([a (hash-ref s "a")]
+                                [b (hash-ref s "b")]
+                                [c (hash-ref s "c")])
+                            (/ (+ (* 100 a) (* 10 b) c) (+ a b c))))
 
 
 
@@ -151,10 +150,9 @@
 ;; quarter problem:
 ;; 26 coins, dollars and quarters
 ;; that add up to $17.
-#;(define quarter-problem (problem '("dollars" "quarters") (make-list 2 (range 1 27))
-                                   (list (cons '("dollars" "quarters") (λ(d q) (= 17 (+ d (* 0.25 q)))))
-                                         (cons '("dollars" "quarters") (λ(d q) (= 26 (+ d q)))))))
-#;(check-hash-items (get-solution quarter-problem backtracking-generator) '#hash(("dollars" . 14) ("quarters" . 12)))
+(define quarter-problem (problem '("dollars" "quarters") (make-list 2 (range 1 27))
+                                 (list (cons '("dollars" "quarters") (λ(d q) (= 17 (+ d (* 0.25 q)))))
+                                       (cons '("dollars" "quarters") (λ(d q) (= 26 (+ d q)))))))
 
 
 
@@ -170,10 +168,18 @@ A collection of 33 coins, consisting of nickels, dimes, and quarters, has a valu
                                  (cons '(dimes nickels) (λ(d n) (= n (* 2 d)))))))
 
 
-(time-repeat 100 (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9))))
+(time-repeat 25
+             (check-hash-items (argmin test-solution (get-solutions abc-problem backtracking-generator))
+                               #hash(("c" . 9) ("b" . 9) ("a" . 1)))
+             (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9)))
+             (check-hash-items (get-solution quarter-problem backtracking-generator) #hash(("dollars" . 14) ("quarters" . 12))))
 
 (parameterize ([current-ordering-heuristic #f])
-  (time-repeat 100 (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9)))))
+  (time-repeat 25
+               (check-hash-items (argmin test-solution (get-solutions abc-problem backtracking-generator))
+                                 #hash(("c" . 9) ("b" . 9) ("a" . 1)))
+               (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9)))
+               (check-hash-items (get-solution quarter-problem backtracking-generator) #hash(("dollars" . 14) ("quarters" . 12)))))
 
 
 
