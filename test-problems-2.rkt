@@ -1,5 +1,5 @@
 #lang racket/base
-(require racket/function racket/generator rackunit racket/list sugar/define sugar/debug)
+(require racket/function racket/generator rackunit racket/list sugar/define sugar/debug sugar/list)
 
 
 (define variable? (λ(x) (or (string? x) (number? x) (symbol? x))))
@@ -22,8 +22,10 @@
 (define constraint? (pairof? scope? relation?))
 (define constraint-scope car)
 (define constraint-relation cdr)
-(struct problem (variables domains constraints) #:transparent)
+(struct problem (variables domains constraints [variables-ordered #:auto]) #:transparent #:auto-value empty #:mutable)
 (define natural? exact-nonnegative-integer?)
+
+(define current-ordering-heuristic (make-parameter 'degree))
 
 (define/contract (assignment-complete? prob assn)
   (problem? assignment? . -> . boolean?)
@@ -34,8 +36,11 @@
 ;; for now, just take the first available.
 (define/contract (get-unassigned-variable prob assn)
   (problem? assignment? . -> . (or/c #f variable?))
-  (define unassigned-vars (filter (λ(pv) (not (hash-has-key? assn pv))) (problem-variables prob)))
-  (and (not (empty? unassigned-vars)) (car unassigned-vars)))
+  (let* ([vars (problem-variables-ordered prob)]
+         [vars (if (empty? vars) (problem-variables prob) vars)])
+    (for/first ([var (in-list vars)]
+                #:when (not (assignment-has-variable? assn var)))
+      var)))
 
 
 ;; in what order should possible values be tried?
@@ -63,8 +68,21 @@
     (apply (constraint-relation c) assn-vals-to-test)))
 
 
+(define/contract (order-variables prob)
+  (problem? . -> . (listof variable?))
+  (case (current-ordering-heuristic)
+    ['(degree) ; degree heuristic: sort vars from most constrained to least
+     (define var-degree-pairs (hash->list (frequency-hash (append-map constraint-scope (problem-constraints prob)))))
+     (map car (sort var-degree-pairs > #:key cdr))]
+    [else (problem-variables prob)]))
+
 (define/contract (backtracking-generator prob)
   (problem? . -> . generator?)
+  
+  ;; order variables for every invocation of the solver (not when creating problem)
+  ;; because constraints may change
+  (set-problem-variables-ordered! prob (order-variables prob)) 
+  
   (generator ()
              (let assign-next-var ([prob prob] [assn (empty-assignment)])
                (define unassigned-var (get-unassigned-variable prob assn))
@@ -119,13 +137,13 @@
 ;;     -------
 ;;      A+B+C
 
-(define abc-problem (problem '("a" "b" "c") (make-list 3 (range 1 10)) empty))
-(define (test-solution s) (let ([a (hash-ref s "a")]
-                                [b (hash-ref s "b")]
-                                [c (hash-ref s "c")])
-                            (/ (+ (* 100 a) (* 10 b) c) (+ a b c))))
-(check-hash-items (argmin test-solution (get-solutions abc-problem backtracking-generator))
-                  #hash(("c" . 9) ("b" . 9) ("a" . 1)))
+#;(define abc-problem (problem '("a" "b" "c") (make-list 3 (range 1 10)) empty))
+#;(define (test-solution s) (let ([a (hash-ref s "a")]
+                                  [b (hash-ref s "b")]
+                                  [c (hash-ref s "c")])
+                              (/ (+ (* 100 a) (* 10 b) c) (+ a b c))))
+#;(check-hash-items (argmin test-solution (get-solutions abc-problem backtracking-generator))
+                    #hash(("c" . 9) ("b" . 9) ("a" . 1)))
 
 
 
@@ -133,10 +151,10 @@
 ;; quarter problem:
 ;; 26 coins, dollars and quarters
 ;; that add up to $17.
-(define quarter-problem (problem '("dollars" "quarters") (make-list 2 (range 1 27))
-                                 (list (cons '("dollars" "quarters") (λ(d q) (= 17 (+ d (* 0.25 q)))))
-                                       (cons '("dollars" "quarters") (λ(d q) (= 26 (+ d q)))))))
-(check-hash-items (get-solution quarter-problem backtracking-generator) '#hash(("dollars" . 14) ("quarters" . 12)))
+#;(define quarter-problem (problem '("dollars" "quarters") (make-list 2 (range 1 27))
+                                   (list (cons '("dollars" "quarters") (λ(d q) (= 17 (+ d (* 0.25 q)))))
+                                         (cons '("dollars" "quarters") (λ(d q) (= 26 (+ d q)))))))
+#;(check-hash-items (get-solution quarter-problem backtracking-generator) '#hash(("dollars" . 14) ("quarters" . 12)))
 
 
 
@@ -153,6 +171,10 @@ A collection of 33 coins, consisting of nickels, dimes, and quarters, has a valu
 
 
 (time-repeat 100 (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9))))
+
+(parameterize ([current-ordering-heuristic #f])
+  (time-repeat 100 (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9)))))
+
 
 
 #|
