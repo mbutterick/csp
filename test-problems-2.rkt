@@ -6,8 +6,9 @@
 (define value? (λ(x) #t))
 (define (listof? proc) (λ(x) (and (list? x) (andmap proc x))))
 (define (pairof? proc1 proc2) (λ(x) (and (pair? x) (proc1 (car x)) (proc2 (cdr x)))))
-(define domain? (listof? string?))
-(define variable-domain-pair? (pairof? variable? domain?))
+(define (hashof? keyproc valproc) (λ(x) (and (hash? x) (andmap keyproc (hash-keys x)) (andmap valproc (hash-values x)))))
+(define domain? (listof? value?))
+
 
 (define (empty-assignment) (hash))
 (define assignment-variables hash-keys)
@@ -15,86 +16,97 @@
 (define assignment-set hash-set)
 (define assignment-ref hash-ref)
 (define assignment-has-variable? hash-has-key?)
-(define assignment? (λ(x) (and (hash? x) (andmap variable? (assignment-variables x)) (andmap value? (assignment-values x)))))
+(define assignment? (hashof? variable? value?))
 
 (define scope? (listof? variable?))
 (define relation? procedure?)
-(define constraint? (pairof? scope? relation?))
-(define constraint-scope car)
-(define constraint-relation cdr)
-(struct problem (variables domains constraints [variables-ordered #:auto]) #:transparent #:auto-value empty #:mutable)
+(struct constraint (scope relation-code relation) #:transparent #:omit-define-syntaxes
+  #:constructor-name new-constraint)
+(define-syntax-rule (constraint scope-vars relation)
+  (new-constraint scope-vars 'relation relation))
+
+
+(define vardom? (hashof? variable? domain?))
+(define vardom-ref hash-ref)
+(define vardom-domains hash-values)
+(define vardom-variables hash-keys)
+(struct problem (vardom constraints) #:transparent)
 (define natural? exact-nonnegative-integer?)
 
 (define current-ordering-heuristic (make-parameter 'degree))
 
-(define/contract (assignment-complete? prob assn)
-  (problem? assignment? . -> . boolean?)
-  (andmap (curry assignment-has-variable? assn) (problem-variables prob)))
+#;(define/contract (assignment-complete? prob assn)
+    (problem? assignment? . -> . boolean?)
+    (andmap (curry assignment-has-variable? assn) (problem-variables prob)))
 
 
 ;; which variable should be assigned next?
-;; for now, just take the first available.
-(define/contract (get-unassigned-variable prob assn)
-  (problem? assignment? . -> . (or/c #f variable?))
-  (let* ([vars (problem-variables-ordered prob)]
-         [vars (if (empty? vars) (problem-variables prob) vars)])
-    (for/first ([var (in-list vars)]
-                #:when (not (assignment-has-variable? assn var)))
-      var)))
+(define/contract (select-unassigned-variable prob)
+  (problem? . -> . (or/c #f variable?))
+  (define ordered-unassigned-vars
+    (let ([unassigned-vars (for/list ([(var dom) (in-hash (problem-vardom prob))]
+                                      #:when (> (length dom) 1)) ; if length = 1, it's assigned
+                             var)])
+      (case (current-ordering-heuristic)
+        ['(degree) ; degree heuristic: sort vars from most constrained to least
+         (define var-degree-table (frequency-hash (append-map constraint-scope (problem-constraints prob))))
+         (define unassigned-var-degree-pairs (map (λ(var) (cons var (hash-ref var-degree-table var))) unassigned-vars))
+         (map car (sort unassigned-var-degree-pairs > #:key cdr))]
+        [else ; no ordering
+         unassigned-vars])))
+  
+  (and (not (empty? ordered-unassigned-vars)) (car ordered-unassigned-vars)))
 
 
 ;; in what order should possible values be tried?
-(define/contract (get-sorted-domain-values prob assn unassigned-var)
-  (problem? assignment? variable? . -> . (listof value?))
-  (define var-domain (for/first ([(var domain) (in-parallel (problem-variables prob) (problem-domains prob))]
-                                 #:when (equal? unassigned-var var))
-                       domain))
-  (define sort-domain identity) ; for now, no reordering
-  (if var-domain
-      (sort-domain var-domain)
-      (error 'get-sorted-domain-values "No domain found for ~a" unassigned-var)))
+(define/contract (get-sorted-domain-values prob unassigned-var)
+  (problem? variable? . -> . (listof value?))
+  (define unassigned-var-domain (vardom-ref (problem-vardom prob) unassigned-var))
+  unassigned-var-domain) ; for now, no reordering
+
+(define/contract (get-assigned-variables prob)
+  (problem . -> . scope?)
+  (andmap (curry = 1) (map length (vardom-domains (problem-vardom prob)))))
+
+(define/contract (problem-consistent? prob)
+  (problem? . -> . boolean?)
+  (define assigned-variables (get-assigned-variables prob))
+  (or (= 0 (length assigned-variables))  ; no assignments thus can't be inconsistent
+      ;; select every constraint whose scope is a subset of assigned vars + new-var
+      ;; not actually going to use `subset?` because it's slow, `member` is fast
+      ;; keep testing constraints till one fails
+      ;; ISSUE: this approach can't tell the difference between an existing assignment & the new one,
+      ;; thus it will test previously-assigned vars unnecessarily
+      (for/and ([c (in-list (problem-constraints prob))] 
+                #:when (andmap (curryr member (assignment-variables assn-to-test)) (constraint-scope c))) 
+        (define assn-vals-to-test (map (curry assignment-ref assn-to-test) (constraint-scope c)))
+        (apply (constraint-relation c) assn-vals-to-test))))
 
 
-;; would the proposed new value break any constraints?
-(define/contract (value-consistent? prob assn new-var proposed-val)
-  (problem? assignment? variable? value? . -> . boolean?)
-  (define assn-to-test (assignment-set assn new-var proposed-val))
-  ;; select every constraint whose scope is a subset of assigned vars + new-var
-  ;; not actually going to use `subset?` because it's slow, `member` is fast
-  ;; keep testing constraints till one fails
-  (for/and ([c (in-list (problem-constraints prob))] 
-            #:when (andmap (curryr member (assignment-variables assn-to-test)) (constraint-scope c))) 
-    (define assn-vals-to-test (map (curry assignment-ref assn-to-test) (constraint-scope c)))
-    (apply (constraint-relation c) assn-vals-to-test)))
+#;(define/contract (order-variables prob)
+    (problem? . -> . (listof variable?))
+    (case (current-ordering-heuristic)
+      ['(degree) ; degree heuristic: sort vars from most constrained to least
+       (define var-degree-pairs (hash->list (frequency-hash (append-map constraint-scope (problem-constraints prob)))))
+       (map car (sort var-degree-pairs > #:key cdr))]
+      [else ; no ordering
+       (problem-variables prob)]))
 
-
-(define/contract (order-variables prob)
-  (problem? . -> . (listof variable?))
-  (case (current-ordering-heuristic)
-    ['(degree) ; degree heuristic: sort vars from most constrained to least
-     (define var-degree-pairs (hash->list (frequency-hash (append-map constraint-scope (problem-constraints prob)))))
-     (map car (sort var-degree-pairs > #:key cdr))]
-    [else ; no ordering
-     (problem-variables prob)]))
+(define/contract (problem-solved? prob)
+  (problem? . -> . boolean?)
+  (andmap (curry = 1) (map length (vardom-domains (problem-vardom prob)))))
 
 (define/contract (backtracking-generator prob)
   (problem? . -> . generator?)
-  
-  ;; order variables for every invocation of the solver (not when creating problem)
-  ;; because constraints may change
-  (set-problem-variables-ordered! prob (order-variables prob)) 
-  
   (generator ()
-             (let assign-next-var ([prob prob] [assn (empty-assignment)])
-               (define unassigned-var (get-unassigned-variable prob assn))
+             (let loop ([prob prob])
                (cond
-                 [(not unassigned-var) (yield assn)] ; assignment is complete, thus we are done
-                 [else
-                  (for ([possible-val (in-list (get-sorted-domain-values prob assn unassigned-var))]
-                        #:when (value-consistent? prob assn unassigned-var possible-val))
-                    ;; todo: add inference checking
-                    (define new-assn (assignment-set assn unassigned-var possible-val))
-                    (assign-next-var prob new-assn))]))))
+                 [(problem-solved? prob) (yield (problem-vardom prob))]
+                 [(problem-consistent? prob)
+                  (let ([unassigned-var (select-unassigned-variable prob)])
+                    (for ([possible-val (in-list (get-sorted-domain-values prob unassigned-var))])
+                      (loop (add-assignment-to-problem prob unassigned-var possible-val))))]
+                 [else #f]))))
 
 
 (define/contract (get-solution-generator prob solver)
@@ -116,14 +128,14 @@
     solution))
 
 
-(module+ test
-  (define prob (problem (list "foo" "zim") (list (range 10) (range 5)) '()))
-  (check-true (assignment-complete? prob '#hash(("foo" . bar) ("zim" . zam))))
-  (check-false (assignment-complete? prob '#hash(("foo" . bar))))
-  (check-false (get-unassigned-variable prob '#hash(("foo" . bar) ("zim" . zam))))
-  (check-equal? (get-unassigned-variable prob '#hash(("foo" . bar))) "zim")
-  (check-equal? (get-sorted-domain-values prob '#hash(("foo" . bar)) "zim") '(0 1 2 3 4))
-  (check-exn exn:fail? (λ _ (get-sorted-domain-values prob '#hash(("foo" . bar) ("zim" . zam)) "not-in-vars"))))
+#;(module+ test
+    (define prob (problem (list "foo" "zim") (list (range 10) (range 5)) '()))
+    (check-true (assignment-complete? prob '#hash(("foo" . bar) ("zim" . zam))))
+    (check-false (assignment-complete? prob '#hash(("foo" . bar))))
+    (check-false (get-unassigned-variable prob '#hash(("foo" . bar) ("zim" . zam))))
+    (check-equal? (get-unassigned-variable prob '#hash(("foo" . bar))) "zim")
+    (check-equal? (get-sorted-domain-values prob '#hash(("foo" . bar)) "zim") '(0 1 2 3 4))
+    (check-exn exn:fail? (λ _ (get-sorted-domain-values prob '#hash(("foo" . bar) ("zim" . zam)) "not-in-vars"))))
 
 (define (check-hash-items h1 h2)
   (check-true (for/and ([(k v) (in-hash h1)])
@@ -138,21 +150,34 @@
 ;;     -------
 ;;      A+B+C
 
-(define abc-problem (problem '("a" "b" "c") (make-list 3 (range 1 10)) empty))
+
+(define/contract (make-problem vardom-pairs [constraint-pairs empty])
+  (((listof (or/c variable? domain?))) ((listof constraint?)) . ->* . problem?)
+  (define vardom-table (apply hash vardom-pairs))
+  (problem vardom-table constraint-pairs))
+
+(define abc-problem (make-problem (list "a" (range 1 10)
+                                        "b" (range 1 10)
+                                        "c" (range 1 10))))
 (define (test-solution s) (let ([a (hash-ref s "a")]
                                 [b (hash-ref s "b")]
                                 [c (hash-ref s "c")])
                             (/ (+ (* 100 a) (* 10 b) c) (+ a b c))))
 
 
-
+(check-hash-items (argmin test-solution (get-solutions abc-problem backtracking-generator))
+                  #hash(("c" . 9) ("b" . 9) ("a" . 1)))
 
 ;; quarter problem:
 ;; 26 coins, dollars and quarters
 ;; that add up to $17.
-(define quarter-problem (problem '("dollars" "quarters") (make-list 2 (range 1 27))
-                                 (list (cons '("dollars" "quarters") (λ(d q) (= 17 (+ d (* 0.25 q)))))
-                                       (cons '("dollars" "quarters") (λ(d q) (= 26 (+ d q)))))))
+
+
+
+(define quarter-problem (make-problem
+                         (list "dollars" (range 1 27) "quarters" (range 1 27))
+                         (list (constraint '("dollars" "quarters") (λ(d q) (= 17 (+ d (* 0.25 q)))))
+                               (constraint '("dollars" "quarters") (λ(d q) (= 26 (+ d q)))))))
 
 
 
@@ -160,26 +185,28 @@
 #|
 A collection of 33 coins, consisting of nickels, dimes, and quarters, has a value of $3.30. If there are three times as many nickels as quarters, and one-half as many dimes as nickels, how many coins of each kind are there?
 |#
-(define nickel-problem (problem '(nickels dimes quarters) (make-list 3 (range 1 34))
-                                (list
-                                 (cons '(nickels dimes quarters) (λ(n d q) (= 33 (+ n d q))))
-                                 (cons '(nickels dimes quarters) (λ(n d q) (= 3.30 (+ (* 0.05 n) (* 0.1 d) (* 0.25 q)))))
-                                 (cons '(nickels quarters) (λ(n q) (= n (* 3 q))))
-                                 (cons '(dimes nickels) (λ(d n) (= n (* 2 d)))))))
+(define nickel-problem (make-problem (list 'nickels (range 1 34)
+                                           'dimes (range 1 34)
+                                           'quarters (range 1 34))
+                                     (list
+                                      (constraint '(nickels dimes quarters) (λ(n d q) (= 33 (+ n d q))))
+                                      (constraint '(nickels dimes quarters) (λ(n d q) (= 3.30 (+ (* 0.05 n) (* 0.1 d) (* 0.25 q)))))
+                                      (constraint '(nickels quarters) (λ(n q) (= n (* 3 q))))
+                                      (constraint '(dimes nickels) (λ(d n) (= n (* 2 d)))))))
 
 
-(time-repeat 25
-             (check-hash-items (argmin test-solution (get-solutions abc-problem backtracking-generator))
-                               #hash(("c" . 9) ("b" . 9) ("a" . 1)))
-             (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9)))
-             (check-hash-items (get-solution quarter-problem backtracking-generator) #hash(("dollars" . 14) ("quarters" . 12))))
-
-(parameterize ([current-ordering-heuristic #f])
-  (time-repeat 25
+#;(time-repeat 25
                (check-hash-items (argmin test-solution (get-solutions abc-problem backtracking-generator))
                                  #hash(("c" . 9) ("b" . 9) ("a" . 1)))
                (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9)))
-               (check-hash-items (get-solution quarter-problem backtracking-generator) #hash(("dollars" . 14) ("quarters" . 12)))))
+               (check-hash-items (get-solution quarter-problem backtracking-generator) #hash(("dollars" . 14) ("quarters" . 12))))
+
+#;(parameterize ([current-ordering-heuristic #f])
+    (time-repeat 25
+                 (check-hash-items (argmin test-solution (get-solutions abc-problem backtracking-generator))
+                                   #hash(("c" . 9) ("b" . 9) ("a" . 1)))
+                 (check-hash-items (get-solution nickel-problem backtracking-generator) #hash((nickels . 18) (quarters . 6) (dimes . 9)))
+                 (check-hash-items (get-solution quarter-problem backtracking-generator) #hash(("dollars" . 14) ("quarters" . 12)))))
 
 
 
