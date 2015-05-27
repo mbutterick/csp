@@ -57,14 +57,11 @@
       (if (empty? unassigned-vars)
           empty
           (case (current-ordering-heuristic)
-            [(degree) ; degree heuristic: sort vars from most constrained to least
+            [(degree) ; degree heuristic: take var involved in most constraints
              (define var-degree-table (frequency-hash (append-map constraint-scope (problem-constraints prob))))
-             (define unassigned-var-degree-pairs (map (λ(var) (cons var (hash-ref var-degree-table var 0))) unassigned-vars))
-             (map car (sort unassigned-var-degree-pairs > #:key cdr))]
-            [(mrv) ; MRV heuristic: sort vars from smallest domain to largest
-             (define var-domainsize-pairs (for/list ([uv (in-list unassigned-vars)])
-                                            (cons uv (length (vardom-ref (problem-vardom prob) uv)))))
-             (map car (sort var-domainsize-pairs < #:key cdr))]
+             (list (argmax (λ(uv) (curryr hash-ref var-degree-table uv 0)) unassigned-vars))]
+            [(mrv) ; MRV heuristic: take var with smallest domain
+             (list (argmin (λ(uv) (length (vardom-ref (problem-vardom prob) uv))) unassigned-vars))]
             [else ; no ordering
              unassigned-vars]))))
   (and (not (empty? ordered-unassigned-vars)) (car ordered-unassigned-vars)))
