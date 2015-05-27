@@ -122,7 +122,7 @@
     (values var (car vals))))
 
 
-(define/contract (add-val-and-inferences prob var val)
+(define/contract (assign-and-infer prob var val)
   (problem? variable? value? . -> . (or/c #f problem?))
   (struct exn:empty-domain exn:fail ())
   (define updated-problem (problem (vardom-set (problem-vardom prob) var (list val)) (problem-constraints prob)))
@@ -134,14 +134,14 @@
                    ([var (in-hash-keys (problem-vardom updated-problem))])
            (define current-domain (vardom-ref acc-vardom var))
            (define pruned-domain
-             (if (= 1 (length current-domain))
-                 current-domain
-                 (for/list ([val (in-list current-domain)]
-                            #:when (value-consistent? (problem acc-vardom (problem-constraints updated-problem)) var val))
-                   val)))
-           (if (= (length pruned-domain) 0)
-               (raise (exn:empty-domain "irrelevant error msg" (current-continuation-marks)))
-               (hash-set acc-vardom var pruned-domain)))))
+             (cond
+               [(= 1 (length current-domain)) current-domain] ; it's assigned
+               [else
+                (define filtered-domain (filter (λ(val) (value-consistent? (problem acc-vardom (problem-constraints updated-problem)) var val)) current-domain))
+                (if (empty? filtered-domain)
+                    (raise (exn:empty-domain "irrelevant error msg" (current-continuation-marks)))
+                    filtered-domain)]))
+           (hash-set acc-vardom var pruned-domain))))
      (and pruned-vardom (problem pruned-vardom (problem-constraints updated-problem)))]
     [else updated-problem]))
 
@@ -149,14 +149,17 @@
   (problem? . -> . generator?)
   (generator ()
              (let loop ([prob prob])
-               (if (all-vars-assigned? prob)
-                   (and (var-assignments-consistent? prob) (yield (problem->solution prob)))
-                   (let ([unassigned-var (get-unassigned-variable prob)])
-                     (for ([possible-val (in-list (get-sorted-domain-values prob unassigned-var))]
-                           #:when (value-consistent? prob unassigned-var possible-val))
-                       (define updated-problem (add-val-and-inferences prob unassigned-var possible-val))
-                       (when updated-problem
-                         (loop updated-problem))))))))
+               (cond
+                 [(all-vars-assigned? prob)
+                  (if (var-assignments-consistent? prob)
+                      (yield (problem->solution prob))
+                      (error 'backtracking-solver (format "got complete but inconsistent assignment: ~a" (problem->solution prob))))]
+                 [else (define unassigned-var (get-unassigned-variable prob))
+                       (for ([possible-val (in-list (get-sorted-domain-values prob unassigned-var))]
+                             #:when (value-consistent? prob unassigned-var possible-val))
+                         (define updated-problem (assign-and-infer prob unassigned-var possible-val))
+                         (when updated-problem
+                           (loop updated-problem)))]))))
 
 
 (define/contract (get-solution-generator prob solver)
@@ -181,6 +184,54 @@
   (check-true (for/and ([(k v) (in-hash h1)])
                 (equal? (hash-ref h2 k) v))))
 
+
+;; map problem in AINA
+
+(define map-problem (make-problem
+                   '(WA (r g b)
+                        NT (r g b)
+                        SA (r g b)
+                        Q (r g b)
+                        NSW (r g b)
+                        V (r g b)
+                        T (r g b))
+                   (list
+                    (constraint '(WA NT) (negate equal?))
+                    (constraint '(Q NT) (negate equal?))
+                    (constraint '(SA NT) (negate equal?))
+                    (constraint '(Q NSW) (negate equal?))
+                    (constraint '(NSW V) (negate equal?))
+                    (constraint '(SA V) (negate equal?))
+                    (constraint '(SA Q) (negate equal?))
+                    (constraint '(SA NSW) (negate equal?))
+                    (constraint '(SA WA) (negate equal?)))))
+                         
+
+#;(define-syntax (variables . vdpairs)
+  (#:rest ((cons/c (or/c variable? (listof variable?)) domain?)) . -> . (listof (or/c variable? domain?)))
+  (append*
+   (for/list ([vdpair (in-list vdpairs)])
+     (define var-or-vars (car vdpair))
+     (define domain (cdr vdpair))
+     (if (list? var-or-vars)
+         (append-map (map (λ(var) (list var domain)) var-or-vars))
+         (list var-or-vars domain)))))
+    
+
+#;(define map-problem (make-problem
+                     (variables
+                      ['WA '(r g b)]
+                      ['(NT SA Q NSW V T) '(r g b)]) 
+                     (constraints
+                      ['(WA NT) (negate equal?)]
+                      ['(Q NT) (negate equal?)]
+                      ['(SA NT) (negate equal?)]
+                      ['(Q NSW) (negate equal?)]
+                      ['(NSW V) (negate equal?)]
+                      ['(SA V) (negate equal?)]
+                      ['(SA Q) (negate equal?)]
+                      ['(SA NSW) (negate equal?)]
+                      ['(SA WA) (negate equal?)])))
 
 
 ;; ABC problem:
@@ -295,6 +346,7 @@ A collection of 33 coins, consisting of nickels, dimes, and quarters, has a valu
 #
 |#
 
+#|
 (define (make-alldiff-constraints vars)
   (for*/list ([var1 (in-list vars)]
          [var2 (in-list (cdr (member var1 vars)))])
@@ -314,12 +366,14 @@ A collection of 33 coins, consisting of nickels, dimes, and quarters, has a valu
    (make-alldiff-constraints var-names))))
 ;(send xsum-problem add-constraint (new all-different-constraint%))
 
-(time (get-solution xsum-problem backtracking-solver))
-
-
-
+(time (get-solutions xsum-problem backtracking-solver))
 
 ;(check-equal? (length (send xsum-problem get-solutions)) 8)
+
+
+|#
+
+
 
 
 #|
