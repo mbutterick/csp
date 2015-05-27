@@ -1,5 +1,5 @@
 #lang racket/base
-(require racket/function racket/generator rackunit racket/list sugar/define sugar/debug sugar/list)
+(require racket/function racket/generator rackunit racket/list sugar/define sugar/debug sugar/list "helper.rkt")
 
 
 (define variable? (λ(x) (or (string? x) (number? x) (symbol? x))))
@@ -97,11 +97,14 @@
   ;; not actually going to use `subset?` because it's slow, `member` is fast
   ;; keep testing constraints till one fails
   (for/and ([c (in-list (problem-constraints prob))] 
-            #:when (and (member new-var (constraint-scope c)) ; new-var must be in scope
-                        ; only care about scopes using assigneed vars 
-                        (andmap (curryr member assigned-vars) (constraint-scope c))))
+            #:when
+            (or (equal? (constraint-scope c) '(*)) ; any args
+                (and (member new-var (constraint-scope c)) ; new-var must be in scope
+                     ; only care about scopes using assigneed vars 
+                     (andmap (curryr member assigned-vars) (constraint-scope c)))))
     ;; since we are testing only assigned vars, each domain will have only one value
-    (define vals-to-test (map (compose1 first (curry vardom-ref updated-vardom)) (constraint-scope c)))
+    (define scope (if (equal? (constraint-scope c) '(*)) assigned-vars (constraint-scope c)))
+    (define vals-to-test (map (compose1 first (curry vardom-ref updated-vardom)) scope))
     (apply (constraint-relation c) vals-to-test)))
 
 
@@ -109,7 +112,8 @@
   (problem? . -> . boolean?)
   ;; values do not violate any constraints
   (for/and ([c (in-list (problem-constraints prob))])
-    (define vals-to-test (map (compose1 first (curry vardom-ref (problem-vardom prob))) (constraint-scope c)))
+    (define scope (if (equal? '(*) (constraint-scope c)) (hash-keys (problem-vardom prob)) (constraint-scope c)))
+    (define vals-to-test (map (compose1 first (curry vardom-ref (problem-vardom prob))) scope))
     (apply (constraint-relation c) vals-to-test)))
 
 
@@ -178,9 +182,6 @@
              [index (in-naturals)] #:final (= (add1 index) count))
     solution))
 
-(define (check-hash-items h1 h2)
-  (check-true (for/and ([(k v) (in-hash h1)])
-                (equal? (hash-ref h2 k) v))))
 
 
 ;; map problem in AINA
@@ -337,28 +338,27 @@ A collection of 33 coins, consisting of nickels, dimes, and quarters, has a valu
               [var2 (in-list (cdr (member var1 vars)))])
     (constraint (list var1 var2) (λ(v1 v2) (not (equal? v1 v2))))))
 
+(require sugar/list)
+
+(define all-different? (λ xs (members-unique? xs)))
 
 (define xsum-problem (make-problem
                       (make-variables ['(l1 l2 l3 l4 r1 r2 r3 r4 x) (range 10)])
-                      (list*
-                       (constraint '(l1 l2 l3 l4 x) (λ (l1 l2 l3 l4 x) 
-                                                      (and (< l1 l2 l3 l4)
-                                                           (= 27 (+ l1 l2 l3 l4 x)))))
-                       (constraint '(r1 r2 r3 r4 x) (λ (r1 r2 r3 r4 x) 
-                                                      (and (< r1 r2 r3 r4)
-                                                           (= 27 (+ r1 r2 r3 r4 x)))))
-                       (make-alldiff-constraints '(l1 l2 l3 l4 r1 r2 r3 r4 x)))))
-;(send xsum-problem add-constraint (new all-different-constraint%))
-
-;(time (solve* xsum-problem))
-
-;(check-equal? (length (send xsum-problem get-solutions)) 8)
+                      (make-constraints
+                       ['(l1 l2 l3 l4 x) (λ (l1 l2 l3 l4 x) 
+                                           (and (< l1 l2 l3 l4)
+                                                (= 27 (+ l1 l2 l3 l4 x))))]
+                       ['(r1 r2 r3 r4 x) (λ (r1 r2 r3 r4 x) 
+                                           (and (< r1 r2 r3 r4)
+                                                (= 27 (+ r1 r2 r3 r4 x))))]
+                       ['(*) all-different?])))
 
 
 
 
 
-#|
+
+
 ;; send more money problem
 #|
 # Assign equal values to equal letters, and different values to
@@ -370,25 +370,27 @@ A collection of 33 coins, consisting of nickels, dimes, and quarters, has a valu
 #   MONEY
 |#
 
-(define sm-problem (new problem%))
-(send sm-problem add-variables '(s e n d m o r y) (range 10))
-(send sm-problem add-constraint (λ(x) (> x 0)) '(s))
-(send sm-problem add-constraint (λ(x) (> x 0)) '(m))
-(send sm-problem add-constraint (λ(d e y) (= (modulo (+ d e) 10) y)) '(d e y))
-(send sm-problem add-constraint (λ(n d r e y)
-                                  (= (modulo (+ (word-value n d) (word-value r e)) 100)
-                                     (word-value e y))) '(n d r e y))
-(send sm-problem add-constraint (λ(e n d o r y)
-                                  (= (modulo (+ (word-value e n d) (word-value o r e)) 1000) (word-value n e y))) '(e n d o r y))
-(send sm-problem add-constraint (λ(s e n d m o r y) (=
-                                                     (+ (word-value s e n d)
-                                                        (word-value m o r e))
-                                                     (word-value m o n e y))) '(s e n d m o r y))
-(send sm-problem add-constraint (new all-different-constraint%))
+(define sm-problem (make-problem
+                    (make-variables
+                     ['(s e n d m o r y) (range 10)])
+                    (make-constraints
+                     ['(s) (λ(x) (> x 0))]
+                     ['(m) (λ(x) (> x 0))]
+                     ['(d e y) (λ(d e y) (= (modulo (+ d e) 10) y))]
+                     ['(n d r e y) (λ(n d r e y)
+                                     (= (modulo (+ (word-value n d) (word-value r e)) 100)
+                                        (word-value e y)))]
+                     ['(e n d o r y) (λ(e n d o r y)
+                                       (= (modulo (+ (word-value e n d) (word-value o r e)) 1000) (word-value n e y)))]
+                     ['(s e n d m o r y) (λ(s e n d m o r y) (=  (+ (word-value s e n d)
+                                                                    (word-value m o r e))
+                                                                 (word-value m o n e y)))]
+                     ['(*) all-different?])))
 
-(check-hash-items (send sm-problem get-solution) '#hash((m . 1) (e . 5) (r . 8) (n . 6) (y . 2) (o . 0) (d . 7) (s . 9)))
+;(check-hash-items (send sm-problem get-solution) '#hash((m . 1) (e . 5) (r . 8) (n . 6) (y . 2) (o . 0) (d . 7) (s . 9)))
 
 
+#|
 ;; queens problem
 ;; place queens on chessboard so they do not intersect
 
