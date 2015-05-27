@@ -94,7 +94,7 @@ A collection of 33 coins, consisting of nickels, dimes, and quarters, has a valu
                                    (and (< r1 r2 r3 r4)
                                         (= 27 (+ r1 r2 r3 r4 x)))) '(r1 r2 r3 r4 x))
 (send xsum-problem add-constraint (new all-different-constraint%))
-(check-equal? (length (send xsum-problem get-solutions)) 8)
+(time (check-equal? (length (send xsum-problem get-solutions)) 8))
 
 
 
