@@ -92,18 +92,25 @@
       (solution-macro get-solution-iter yield))
     
     (define/private (get-args)
+      ;; like vardom: hash mapping of variable names to domains
       (define variable-domains (hash-copy _variable-domains))
-      
+
+      ;; _constraints = (list (cons constraint variables) ...)
       (define constraints
         (let ([all-variables (hash-keys variable-domains)])
           (for/list ([(constraint variables) (in-parallel (map first _constraints) (map second _constraints))])
             (list constraint (if (null? variables) all-variables variables)))))
-      
+
+      ;; vconstraints is a hash mapping each variable to a list of constraints it's involved in
+      ;; Q: why is this helpful?
+      ;; hash starts empty
       (define vconstraints 
         (hash-copy ; converts for/hash to mutable hash
          (for/hash ([variable (in-hash-keys variable-domains)])
            (values variable null))))
-      
+
+      ;; then loop through constraints, updating the vconstraints table
+      ;; note nested loop with for*
       (for* ([(constraint variables) (in-parallel (map first constraints) (map second constraints))]
              [variable (in-list variables)])
         (hash-update! vconstraints variable (λ(val) (cons (list constraint variables) val))))

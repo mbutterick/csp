@@ -43,10 +43,12 @@
     (field [_forwardcheck forwardcheck]) 
     
     (define/override (get-solution-iter domains constraints vconstraints)
+
+      ;; note: this implementation only sorts variables once, not repeatedly
       (define sorted-variables (sort (hash-keys domains) list-comparator
                                       #:key (λ(var)
-                                              (list (- (length (hash-ref vconstraints var)))
-                                                    (length ((hash-ref domains var)))
+                                              (list (- (length (hash-ref vconstraints var))) ; degree
+                                                    (length ((hash-ref domains var))) ; mrv
                                                     var))))
       ;; state-retention variables
       (define possible-solution (make-hash))

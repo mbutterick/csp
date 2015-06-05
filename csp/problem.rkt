@@ -33,26 +33,6 @@
 (define solution? (hashof? variable? value?))
 
 
-;; which variable should be assigned next?
-(define/contract (get-unassigned-variable prob)
-  (problem? . -> . (or/c #f variable?))
-  (define ordered-unassigned-vars
-    (let ([unassigned-vars (for/list ([(var dom) (in-hash (problem-vardom prob))]
-                                      #:when (> (length dom) 1)) ; if length = 1, it's assigned
-                             var)])
-      (if (empty? unassigned-vars)
-          empty
-          (case (current-ordering-heuristic)
-            [(degree) ; degree heuristic: take var involved in most constraints
-             (define var-degree-table (frequency-hash (append-map constraint-scope (problem-constraints prob))))
-             (list (argmax (λ(uv) (curryr hash-ref var-degree-table uv 0)) unassigned-vars))]
-            [(mrv) ; MRV heuristic: take var with smallest domain
-             (list (argmin (λ(uv) (length (vardom-ref (problem-vardom prob) uv))) unassigned-vars))]
-            [else ; no ordering
-             unassigned-vars]))))
-  (and (not (empty? ordered-unassigned-vars)) (car ordered-unassigned-vars)))
-
-
 ;; in what order should possible values be tried?
 (define/contract (get-sorted-domain-values prob unassigned-var)
   (problem? variable? . -> . (listof value?))
@@ -60,11 +40,19 @@
   unassigned-var-domain) ; for now, no reordering
 
 
+(define/contract (variable-assigned? prob var)
+  (problem? variable? . -> . boolean?)
+  (= 1 (length (vardom-ref (problem-vardom prob) var))))
+
+
 (define/contract (get-assigned-variables prob)
   (problem? . -> . (listof variable?))
-  (for/list ([(var dom) (in-hash (problem-vardom prob))]
-             #:when (= 1 (length dom)))
-    var))
+  (filter (curry variable-assigned? prob) (hash-keys (problem-vardom prob))))
+
+
+(define/contract (get-unassigned-variables prob)
+  (problem? . -> . (listof variable?))
+  (filter-not (curry variable-assigned? prob) (hash-keys (problem-vardom prob))))
 
 
 (define/contract (all-vars-assigned? prob)
@@ -139,7 +127,7 @@
      (and pruned-vardom (problem pruned-vardom (problem-constraints updated-problem)))]
     [else updated-problem]))
 
-(define/contract (preprocess prob)
+(define/contract (filter-domains prob)
   (problem? . -> . problem?)
   (case (current-preprocessing)
     [(delete-singletons)
@@ -163,7 +151,7 @@
   (define vardom-table (if (hash? vardom-or-vardom-pairs)
                            vardom-or-vardom-pairs
                            (apply hash vardom-or-vardom-pairs)))
-  (problem vardom-table constraint-pairs))
+  (filter-domains (problem vardom-table constraint-pairs)))
 
 
 
@@ -180,6 +168,7 @@
               (append-map (λ(var) (list `(quote ,var) domain)) vars)))))
        (datum->syntax stx `(list ,@alternating-vars-and-domains)))]))
 
+(require (for-syntax sugar))
 (define-syntax (make-constraints stx)
   (syntax-case stx ()
     [(_ sflists ...) ; sflist = scope-function list
@@ -189,7 +178,10 @@
           (for/list ([sflist (in-list my-sflists)])
             (let* ([scope-or-scopes (cadar sflist)]
                    [function (cadr sflist)]
-                   [scopes (if (andmap list? scope-or-scopes) scope-or-scopes (list scope-or-scopes))])
+                   ;; check for empty scope because it denotes indefinite arity constraint
+                   [scopes (if (and (not (empty? scope-or-scopes)) (andmap list? scope-or-scopes))
+                               scope-or-scopes
+                               (list scope-or-scopes))])
               (map (λ(scope) `(constraint (quote ,scope) ,function)) scopes)))))
        (datum->syntax stx `(list ,@constraints)))]))
 

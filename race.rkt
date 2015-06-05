@@ -18,7 +18,7 @@
                                            [current-inference-rule #f]
                                            [current-preprocessing #t])
                               (time-repeat laps (solve prob)))))))]))
-(race quarter-problem 1)
-(race nickel-problem 1)
+;(race quarter-problem 1)
+;(race nickel-problem 1)
 (race two-four-problem 1)
-(race xsum-problem)
+;(race xsum-problem)

@@ -1,18 +1,42 @@
 #lang racket/base
-(require racket/generator racket/list sugar/define rackunit "problem.rkt")
+(require racket/generator racket/list sugar/define rackunit "problem.rkt" "world.rkt" sugar/list racket/function)
 (provide (all-defined-out))
 
 
+(define/contract (sort-unassigned-variables prob)
+  (problem? . -> . (listof variable?))
+  (define unassigned-vars (get-unassigned-variables prob))
+  (if (empty? unassigned-vars)
+      empty
+      (case (current-ordering-heuristic)
+        [(degree) ; degree heuristic: take var involved in most constraints
+         (define var-degree-table (frequency-hash (append-map constraint-scope (problem-constraints prob))))
+         (list (argmax (λ(uv) (curryr hash-ref var-degree-table uv 0)) unassigned-vars))]
+        [(mrv) ; MRV heuristic: take var with smallest domain
+         (sort unassigned-vars < #:key (λ(uv) (length (vardom-ref (problem-vardom prob) uv))))]
+        [else ; no ordering
+         unassigned-vars])))
+
+;; which variable should be assigned next?
+(define/contract (next-unassigned-variable prob vars)
+  (problem? (listof variable?) . -> . (or/c #f variable?))
+  (for/first ([var (in-list vars)]
+              #:unless (variable-assigned? prob var))
+    var))
+
+(require sugar)
 (define/contract (backtracking-solver prob)
   (problem? . -> . generator?)
+  (define vars-to-assign (sort-unassigned-variables prob))
+  (report vars-to-assign)
   (generator ()
-             (let loop ([prob (preprocess prob)])
+             (let loop ([prob prob])
                (cond
                  [(all-vars-assigned? prob)
                   (if (var-assignments-consistent? prob)
                       (yield (problem->solution prob))
                       (error 'backtracking-solver (format "got complete but inconsistent assignment: ~a" (problem->solution prob))))]
-                 [else (define unassigned-var (get-unassigned-variable prob))
+                 [else (define unassigned-var (next-unassigned-variable prob vars-to-assign))
                        (for ([possible-val (in-list (get-sorted-domain-values prob unassigned-var))]
                              #:when (value-consistent? prob unassigned-var possible-val))
                          (define updated-problem (assign-and-infer prob unassigned-var possible-val))
@@ -49,3 +73,7 @@
   (string->number (string-append* (map ~a xs))))
 
 (check-equal? (word-value 1 2 3 4 5) 12345)
+
+(define mapc (make-problem
+              (make-variables ['(WA NT SA Q NSW V T) '(r g b)])
+              (make-constraints ['((WA NT) (Q NT) (SA NT) (Q NSW) (NSW V) (SA V) (SA Q) (SA NSW) (SA WA)) (negate equal?)])))
