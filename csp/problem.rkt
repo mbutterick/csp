@@ -1,7 +1,8 @@
 #lang racket/base
 (require (for-syntax racket/base racket/syntax racket/list racket/function))
-(require sugar/define sugar/list sugar/debug racket/list racket/function "world.rkt")
+(require sugar/list sugar/debug racket/list racket/function "world.rkt")
 (provide (all-defined-out))
+(require (rename-in racket/base [define define/contract]) (except-in racket/contract define/contract))
 
 (define variable? (λ(x) (or (string? x) (number? x) (symbol? x))))
 (define value? (λ(x) #t))
@@ -48,7 +49,6 @@
 (define/contract (get-assigned-variables prob)
   (problem? . -> . (listof variable?))
   (filter (curry variable-assigned? prob) (hash-keys (problem-vardom prob))))
-
 
 (define/contract (get-unassigned-variables prob)
   (problem? . -> . (listof variable?))

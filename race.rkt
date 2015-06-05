@@ -12,13 +12,8 @@
        #'(for-each displayln
                    (map ~v (list
                             (time-repeat laps (send 0:prob get-solution))
-                            
-                            
-                            (parameterize ([current-ordering-heuristic #f]
-                                           [current-inference-rule #f]
-                                           [current-preprocessing #t])
-                              (time-repeat laps (solve prob)))))))]))
+                            (time-repeat laps (solve prob))))))]))
 ;(race quarter-problem 1)
-;(race nickel-problem 1)
-(race two-four-problem 1)
+(race nickel-problem 10)
+;(race two-four-problem 1)
 ;(race xsum-problem)

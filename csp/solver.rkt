@@ -1,7 +1,7 @@
 #lang racket/base
-(require racket/generator racket/list sugar/define rackunit "problem.rkt" "world.rkt" sugar/list racket/function)
+(require racket/generator racket/list rackunit "problem.rkt" "world.rkt" sugar/list racket/function)
+(require (rename-in racket/base [define define/contract]) (except-in racket/contract define/contract))
 (provide (all-defined-out))
-
 
 (define/contract (sort-unassigned-variables prob)
   (problem? . -> . (listof variable?))
@@ -11,7 +11,7 @@
       (case (current-ordering-heuristic)
         [(degree) ; degree heuristic: take var involved in most constraints
          (define var-degree-table (frequency-hash (append-map constraint-scope (problem-constraints prob))))
-         (list (argmax (λ(uv) (curryr hash-ref var-degree-table uv 0)) unassigned-vars))]
+         (sort unassigned-vars > #:key (λ(uv) (curryr hash-ref var-degree-table uv 0)))]
         [(mrv) ; MRV heuristic: take var with smallest domain
          (sort unassigned-vars < #:key (λ(uv) (length (vardom-ref (problem-vardom prob) uv))))]
         [else ; no ordering
@@ -24,11 +24,9 @@
               #:unless (variable-assigned? prob var))
     var))
 
-(require sugar)
 (define/contract (backtracking-solver prob)
   (problem? . -> . generator?)
   (define vars-to-assign (sort-unassigned-variables prob))
-  (report vars-to-assign)
   (generator ()
              (let loop ([prob prob])
                (cond
