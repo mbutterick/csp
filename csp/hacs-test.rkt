@@ -45,7 +45,7 @@
                                                  (list (constraint '(a b) (negate =)))) 'a))))
 
 
-(check-equal? (csp-vars (forward-check (csp (list (var 'a '(0))
+#;(check-equal? (csp-vars (forward-check (csp (list (var 'a '(0))
                                                     (var 'b (range 3)))
                                               (list (constraint '(a b) <))) 'a))
               (list (var 'a '(0)) (cvar 'b (set 1 2) '((a . 0)))))

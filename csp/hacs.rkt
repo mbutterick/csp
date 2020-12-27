@@ -1,9 +1,7 @@
 #lang debug racket
-(require racket/generator graph racket/set)
-(provide (except-out (all-defined-out) define/contract))
+(require racket/generator graph racket/set racket/contract)
+(provide (all-defined-out))
 
-(define-syntax-rule (define/contract EXPR CONTRACT . BODY)
-  (define EXPR . BODY))
 
 (define-syntax when-debug
   (let ()
@@ -69,7 +67,8 @@
 (define cvar? checked-variable?)
 
 (struct assigned-var var () #:transparent)
-(define avar assigned-var)
+(define (avar name domain)
+  (assigned-var name (if (list? domain) (apply set domain) domain)))
 (define avar? assigned-var?)
 
 (define/contract (make-csp [vars null] [consts null])
@@ -77,11 +76,11 @@
   (csp vars consts))
 
 (define/contract (make-var name [vals null])
-  ((name?) ((listof any/c)) . ->* . var?)
-  (var name (list->set vals)))
+  ((name?) ((or/c (listof any/c) set?)) . ->* . var?)
+  (var name (if (set? vals) vals (list->set vals))))
 
 (define/contract (make-var-names prefix vals [suffix ""])
-  ((string? (listof any/c)) ((string?)) . ->* . (listof name?))
+  ((string? (listof any/c)) (string?) . ->* . (listof name?))
   (for/list ([val (in-list vals)])
     (string->symbol (format "~a~a~a" prefix val suffix))))
 
@@ -93,9 +92,10 @@
     (when (memq name (map var-name vrs))
       (raise-argument-error 'add-vars! "var that doesn't already exist" name))
     (append  vrs (list (make-var name
-                                 (match vals-or-procedure
-                                   [(? procedure? proc) (proc)]
-                                   [vals vals]))))))
+                                 (let loop ([vals-or-procedure vals-or-procedure])
+                                   (match vals-or-procedure
+                                     [(? procedure? proc) (loop (proc))]
+                                     [vals (apply set vals)])))))))
 
 (define/contract (add-var! prob name [vals-or-procedure empty])
   ((csp? name?) ((or/c (listof any/c) procedure?)) . ->* . void?)
@@ -103,7 +103,7 @@
 
 (define/contract (add-constraints! prob proc namess [proc-name #false]
                                    #:caller [caller-id 'add-constraints!])
-  ((csp? procedure? (listof (listof name?))) ((or/c #false name?)) . ->* . void?)
+  ((csp? procedure? (listof (listof name?))) ((or/c #false name?) #:caller symbol?) . ->* . void?)
   (unless (procedure? proc)
     (raise-argument-error caller-id "procedure" proc))
   (unless (and (list? namess) (andmap (λ (ns) (and (list? ns) (andmap name? ns))) namess))
@@ -161,7 +161,7 @@
     vr))
 
 (define/contract (find-domain prob name)
-  (csp? name? . -> . (listof any/c))
+  (csp? name? . -> . set?)
   (check-name-in-csp! 'find-domain prob name)
   (domain (find-var prob name)))
 
@@ -210,7 +210,7 @@
                  ;; use boxes here as cheap way to distinguish id symbols from value symbols
                  (define arity-reduction-pattern (for/list ([cname (in-list cnames)])
                                                    (if (assigned? cname)
-                                                       (first (find-domain prob cname))
+                                                       (first (set->list (find-domain prob cname)))
                                                        (box cname))))
                  (constraint (filter-not assigned? cnames)
                              (reduce-function-arity proc arity-reduction-pattern))]
@@ -230,7 +230,7 @@
     (make-csp
      (for/list ([vr (in-vars prob)])
        (if (eq? name (var-name vr))
-           (assigned-var name (list val))
+           (assigned-var name (set val))
            vr))
      (constraints prob))
     (when-debug (set! nassns (add1 nassns)))))
@@ -340,16 +340,16 @@
                    constraint-proc ; so val stays on left
                    (λ (val other-val) (constraint-proc other-val val)))) ; otherwise reverse arg order
   (define (satisfies-arc? val)
-    (for/or ([other-val (in-list (find-domain prob other-name))])
+    (for/or ([other-val (in-set (find-domain prob other-name))])
       (proc val other-val)))
   (make-csp
    (for/list ([vr (in-vars prob)])
      (cond
        [(assigned-var? vr) vr]
        [(eq? name (var-name vr))
-        (make-var name (match (filter satisfies-arc? (domain vr))
+        (make-var name (match (filter satisfies-arc? (set->list (domain vr)))
                          [(? empty?) (backtrack!)]
-                         [vals vals]))]
+                         [vals (apply set vals)]))]
        [else vr]))
    (constraints prob)))
 
@@ -373,14 +373,14 @@
                                                           (memq cname checkable-names))))
                                    const)))
   (for/fold ([prob prob]
-             [arcs (sort starting-arcs < #:key (λ (a) (length (find-domain prob (arc-name a)))) #:cache-keys? #true)]
+             [arcs (sort starting-arcs < #:key (λ (a) (set-count (find-domain prob (arc-name a)))) #:cache-keys? #true)]
              #:result (prune-singleton-constraints prob))
             ([i (in-naturals)]
              #:break (empty? arcs))
     (match-define (cons (arc name proc) other-arcs) arcs)
     (define reduced-csp (reduce-domain prob (arc name proc)))
     (define (domain-reduced? name)
-      (= (length (find-domain prob name)) (length (find-domain reduced-csp name))))
+      (= (set-count (find-domain prob name)) (set-count (find-domain reduced-csp name))))
     (values reduced-csp (if (domain-reduced? name)
                             (remove-duplicates (append (starting-arcs . terminating-at? . name) other-arcs))
                             other-arcs))))
@@ -397,7 +397,7 @@
      (match ((constraints prob) . relating-only . (list ref-name name))
        [(? empty?) vr]
        [constraints
-        (define ref-val (first (find-domain prob ref-name)))
+        (define ref-val (first (set->list (find-domain prob ref-name))))
         (define new-vals
           (for/set ([val (in-set vals)]
                     #:when (for/and ([const (in-list constraints)])
@@ -554,7 +554,7 @@
 (define (assign-random-vals prob)
   (for/fold ([new-csp prob])
             ([name (in-var-names prob)])
-    (assign-val new-csp name (random-pick (find-domain prob name)))))
+    (assign-val new-csp name (random-pick (set->list (find-domain prob name))))))
 
 (define (make-min-conflcts-thread prob-start thread-count max-steps [main-thread (current-thread)])
   (thread
@@ -595,13 +595,14 @@
              #:when (positive? (nconflicts prob name)))
     name))
  
-(define/contract (min-conflicts-value prob name vals)
-  (csp? name? (listof any/c) . -> . any/c)
+(define/contract (min-conflicts-value prob name valset)
+  (csp? name? set? . -> . any/c)
   ;; Return the value that will give var the least number of conflicts
+  (define vals (set->list valset))
   (define vals-by-conflict (sort vals < #:key (λ (val) (nconflicts prob name val))
                                  #:cache-keys? #true))
   (for/first ([val (in-list vals-by-conflict)]
-              #:unless (equal? val (first (find-domain prob name)))) ;; but change the value
+              #:unless (equal? val (first (set->list (find-domain prob name))))) ;; but change the value
     val))
 
 (define no-value-sig (gensym))
@@ -618,7 +619,7 @@
   (define assocs
     (for/list ([vr (in-vars prob)])
       (match vr
-        [(var name (list val)) (cons name val)])))
+        [(var name s) (cons name (car (set->list s)))])))
   (if keys
       (for/list ([key (in-list keys)])
         (assq key assocs))
@@ -664,9 +665,8 @@
 (define/contract (solve* prob [max-solutions +inf.0]
                          #:finish-proc [finish-proc (λ (p) (csp->assocs p (map var-name (vars prob))))]
                          #:solver [solver #f])
-  ((csp?) (natural? #:finish-proc procedure? #:solver procedure?) . ->* . (listof any/c))
+  ((csp?) (natural? #:finish-proc procedure? #:solver (or/c #false procedure?)) . ->* . (listof any/c))
   (when-debug (reset-nassns!) (reset-nfchecks!) (reset-nchecks!))          
-
   (parameterize ([current-solver (or solver (current-solver) backtracking-solver)])
     (for/list ([sol (in-solutions prob)]
                [idx (in-range max-solutions)])

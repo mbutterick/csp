@@ -31,8 +31,9 @@
     (apply string (add-between (for/list ([idx (in-range board-size)])
       (if (= idx (cdr q)) #\@ #\·)) #\space))) "\n"))
 
-(current-thread-count 4)
-(displayln (solve queens #:finish-proc sol->string))
-(parameterize ([current-solver min-conflicts-solver])
+(current-thread-count 1)
+#;(displayln (solve queens #:finish-proc sol->string))
+(parameterize ([current-solver min-conflicts-solver]
+               #;[current-inference ac-3])
     (time (solve queens)))
 
